@@ -64,7 +64,7 @@ npm start
 运行测试：
 
 ```bash
-npm test            # 几何校验单元测试（17 项）+ 巡检版发布端到端（15 项）+ 巡检轮次端到端（18 项）
+npm test            # 几何校验（17 项）+ 巡检版发布（15 项）+ 巡检轮次（18 项）+ 区域沿革比对（16 项）
 ```
 
 ---
@@ -133,6 +133,25 @@ data/
      **空区域发布版不能发起巡检**。
    - 完成后旧轮次关联的冻结区域与结果永久固定：之后图纸改名、换图、区域编辑或发布新版，
      历史轮次都不变。巡检页上可查看该版全部历史轮次并继续进行中的轮次。
+7. **核对两版区域沿革**（只读巡检页内「区域沿革比对」面板，至少发布过 2 个巡检版时出现）：
+   - 选择**同一图纸**的旧版与较新新版（旧版序号必须小于新版），点 **🔀 开始两版比对**，
+     页面 `/compare.html?plan=<图纸ID>&comparison=<比对ID>` **左右并排展示两份冻结图纸、
+     冻结原图与区域清单**（两侧画布各自缩放/平移）。
+   - **相同编号只作配对建议**（图上黄色虚框 / 面板建议区列出），不会自动认定；可逐条「确认配对」、
+     「全部采纳建议」，已确认的行可随时「**解除**」，也可用两侧下拉「**手动改配**」
+     （把占用中的编号改到另一行时，原行该侧自动解除）。
+   - 旧版与新版的**每个区域至多参与一对**：重复占用会被页面与服务端同时拒绝；
+     **编号改名或复用不能自动认定为同一区域**（如旧版 B-02 改名新版 B-20，需手动配上）。
+   - 「💾 保存草稿」携带**所见比对版本号**：他人先保存导致版本推进时返回
+     **409 `COMPARISON_VERSION_CONFLICT`** 与服务端最新配对状态，本次写入被拒，
+     **你未提交的选择（含待选手动行）原样保留**，可对照后重试。
+   - 「🔒 确认全部并生成差异」后得到**可复看的只读结果**：逐对列出编号、风险等级、顶点的变化
+     （顶点逐点给出位移 / 新增 / 删除与 Δ 坐标），并单列**两侧未配对区域**
+     （旧版删除/未确认的、新增于新版的）；允许保留未配对区域，不要求一一配齐。
+   - 结果只取自两个发布版的**冻结快照**：**不随编辑态或后续发布改变**；
+     完成后任务只读，再保存/再完成均返回 **409 `COMPARISON_COMPLETED`**，历史列表可随时「复看差异」。
+   - 跨图纸、倒序（旧序号 ≥ 新序号）、相同版本、不存在的版本序号、重复占用区域一律**明确拒绝**，
+     校验发生在写入前，**不留下任务或部分配对**。
 
 多人协作：页面每 3 秒轮询一次最新数据。图纸与区域有任何变化都会收到提示，
 区域列表与图纸版本实时刷新；正在编辑的草稿不会被刷新覆盖。
@@ -211,6 +230,34 @@ data/
 - **入口**：轮次只能从现有**只读巡检页**发起与进入历史轮次
   （`/round.html?plan=<图纸ID>&round=<轮次ID>`）；编辑器没有巡检填写入口。
 
+### 区域沿革比对（两个已发布版本之间）
+
+- **前提与方向**：只能对**同一图纸**的两个**已发布**巡检版创建；必须给具体发布序号
+  （不接受 `latest`），且**旧版序号 < 新版序号**。跨图纸访问、倒序（`REVERSED_ORDER`）、
+  相同版本（`SAME_PUBLICATION`）、不存在的版本（`NO_PUBLICATION`）、非法序号都在写入前拒绝，
+  **不创建比对任务**。同一对版本允许创建多个独立比对任务（多人分别核对）。
+- **建议不等于配对**：创建后返回两侧完整冻结区域与 `suggestions`（两侧编号相同的候选），
+  `pairs` 初始为空；编号可能**改名或复用**，同编号**绝不自动认定**为同一区域，必须用户确认。
+- **配对不变量**：旧版每个区域、新版每个区域都**至多参与一对**。保存接口对整份 `pairs`
+  做全量校验：编号不在对应冻结版本 → **400 `UNKNOWN_REGION`**；同一编号出现两次 →
+  **400 `REGION_ALREADY_PAIRED`**。保存为**整份替换**语义（空数组即清空），
+  任何拒绝都发生在写入前，数据库唯一索引兜底，**不留下部分配对**。
+- **草稿乐观锁**：比对任务有独立 `version`（创建为 1，每次有效保存 +1，完成再 +1）。
+  保存配对与完成都必须带所见 `version`：
+  - 已被他人推进 → **409 `COMPARISON_VERSION_CONFLICT`**，`server` 字段附最新草稿
+    （两侧冻结区域、建议、已确认配对），本次提交不生效，**页面保留全部未提交选择**；
+  - 已完成后再写/再完成 → **409 `COMPARISON_COMPLETED`**，响应附最终只读结果。
+- **差异结果（完成时一次性冻结）**：`result_json` 冗余保存两侧发布元信息（序号、所见图纸版本、
+  图纸名、尺寸、发布时间）、每对的完整区域对象与逐点变化、两侧未配对区域清单。
+  - 每对给出：`code_changed`（编号是否变化，如 B-02→B-20）、`risk_level.old/new/changed`、
+    `vertices.summary`（`unchanged / moved / vertex_count_changed`）与逐点
+    `same / moved（含 Δ dx,dy）/ added / removed`，并汇总 `changes` 标签；
+  - `unpaired_old` / `unpaired_new` 列出两侧未配对区域（编号 + 完整区域），
+    允许全部不配（结果仍可生成、可复看）。
+- **只读与冻结保证**：完成后 `status=completed`、记录 `completed_at`，详情接口直接返回
+  `{status:"completed", result}`；结果只引用发布快照数据，之后图纸改名、换图、区域编辑或
+  重新发布**都不会改变任何已完成差异**。
+
 ### 导出 / 导入的一致性与原子性
 
 - 导出保留：原图、`width/height` 尺寸、全部区域（编号、风险等级、顶点原图坐标）、
@@ -248,8 +295,14 @@ data/
 | `GET` | `/api/plans/:id/rounds/:roundId` | 轮次详情（所属发布版信息 + 每区冻结区域及结果） |
 | `PUT` | `/api/plans/:id/rounds/:roundId/results/:code` | 填写/覆盖单区结果（`conclusion`,`remark`,`version`） |
 | `POST` | `/api/plans/:id/rounds/:roundId/complete` | 完成轮次（body 带所见 `version`；全部齐全才允许） |
-| 页面 | `/inspector.html?plan=<id>[&seq=<序号>]` | 只读巡检页（省略 `seq` 看最新版；页内可发起/查看轮次） |
+| `POST` | `/api/plans/:id/comparisons` | 创建两版区域沿革比对（`older_seq`,`newer_seq` 必须同为该图纸已发布序号且旧<新） |
+| `GET` | `/api/plans/:id/comparisons` | 图纸维度比对任务列表（含两版序号 / 配对数 / 状态，最新在前） |
+| `GET` | `/api/plans/:id/comparisons/:cid` | 比对详情：进行中返回草稿（冻结区域+建议+配对）；完成后返回只读差异结果 |
+| `PUT` | `/api/plans/:id/comparisons/:cid/pairs` | 保存配对草稿（整份替换 `pairs`，带所见 `version`） |
+| `POST` | `/api/plans/:id/comparisons/:cid/complete` | 确认配对并生成只读差异（可携带当前所见 `pairs` 与 `version`） |
+| 页面 | `/inspector.html?plan=<id>[&seq=<序号>]` | 只读巡检页（省略 `seq` 看最新版；页内可发起/查看轮次与两版比对） |
 | 页面 | `/round.html?plan=<id>&round=<轮次ID>` | 巡检轮次填写页（完成后只读展示） |
+| 页面 | `/compare.html?plan=<id>&comparison=<比对ID>` | 两版区域并排比对页（配对草稿 / 完成后只读复看差异） |
 
 顶点坐标格式：`vertices: [{"x": 120.5, "y": 88}, ...]`，均为**原图像素坐标**。
 错误响应统一为：`{"error":"CODE","message":"中文原因", ...}`，冲突/删除/轮次冲突响应另带 `server` 最新快照。
@@ -350,9 +403,79 @@ curl -X PUT http://localhost:8080/api/plans/1/rounds/5/results/A-01 \
 }
 ```
 
----
+### 区域沿革比对调用示例（curl）
 
-## 七、目录结构
+```bash
+# 1) 创建比对：同一图纸两个已发布版本，旧版序号必须小于新版（不接受 latest）
+curl -X POST http://localhost:8080/api/plans/1/comparisons \
+  -H 'Content-Type: application/json' \
+  -d '{"older_seq":1,"newer_seq":2,"inspector":"李四"}'
+# 201 {"comparison":{"id":7,"older_seq":1,"newer_seq":2,"status":"in_progress","version":1,...},
+#   "older":{...,"regions":[...]},"newer":{...,"regions":[...]},
+#   "suggestions":[{"old_code":"A-01","new_code":"A-01"}],  # 同编号仅为建议
+#   "pairs":[]}                                             # 不自动配对
+# 倒序/相同版本 → 400 REVERSED_ORDER / SAME_PUBLICATION
+# 版本不存在 → 404 NO_PUBLICATION；跨图纸访问任务 → 404 COMPARISON_NOT_FOUND
+
+# 2) 保存配对草稿（整份替换；每个区域至多出现一次，重复占用 → 400 REGION_ALREADY_PAIRED）
+curl -X PUT http://localhost:8080/api/plans/1/comparisons/7/pairs \
+  -H 'Content-Type: application/json' \
+  -d '{"version":1,"pairs":[
+        {"old_code":"A-01","new_code":"A-01"},
+        {"old_code":"B-02","new_code":"B-20"}]}'
+# 200 {"comparison":{"version":2,"pair_count":2,...},"pairs":[...],"suggestions":[]}
+# 他人先保存后仍带 version=1 → 409 COMPARISON_VERSION_CONFLICT
+#   响应 server 字段为最新草稿；本次不写入，客户端未提交选择保留
+
+# 3) 确认全部配对并生成只读差异（也可在 body 里再带一次当前 pairs）
+curl -X POST http://localhost:8080/api/plans/1/comparisons/7/complete \
+  -H 'Content-Type: application/json' -d '{"version":2}'
+# 201 {"status":"completed","result":{...},"message":"差异结果已生成并锁定：2 对配对（2 对有变化），…"}
+# 完成后再保存/再完成 → 409 COMPARISON_COMPLETED（server.result 附最终结果）
+
+# 4) 复看：进行中返回草稿；完成后返回 {status:"completed", result:{...}}
+curl http://localhost:8080/api/plans/1/comparisons/7
+curl http://localhost:8080/api/plans/1/comparisons          # 该图纸全部比对任务
+# 浏览器并排页面： http://localhost:8080/compare.html?plan=1&comparison=7
+```
+
+差异结果 `result` 形如（顶点逐点、未配对区域均完整内联，结果自包含可复看）：
+
+```json
+{
+  "comparison_id": 7, "plan_id": 1, "plan_name": "1号馆",
+  "older": { "seq": 1, "plan_version": 2, "width": 300, "height": 200, "region_count": 3 },
+  "newer": { "seq": 2, "plan_version": 5, "width": 300, "height": 200, "region_count": 3 },
+  "pair_count": 2, "changed_pair_count": 2,
+  "pairs": [
+    {
+      "old_code": "A-01", "new_code": "A-01", "code_changed": false,
+      "risk_level": { "old": "低风险", "new": "低风险", "changed": false },
+      "vertices": {
+        "changed": true, "summary": "moved",
+        "old_count": 4, "new_count": 4, "moved_count": 4, "added_count": 0, "removed_count": 0,
+        "points": [
+          { "index": 1, "change": "moved",
+            "old": {"x": 10, "y": 10}, "new": {"x": 12, "y": 12}, "delta": {"dx": 2, "dy": 2} }
+        ]
+      },
+      "changes": ["vertices"],
+      "old_region": { "code": "A-01", "risk_level": "低风险", "vertices": [{"x":10,"y":10}, "..."] },
+      "new_region": { "code": "A-01", "risk_level": "低风险", "vertices": [{"x":12,"y":12}, "..."] }
+    },
+    {
+      "old_code": "B-02", "new_code": "B-20", "code_changed": true,
+      "risk_level": { "old": "高风险", "new": "中风险", "changed": true },
+      "vertices": { "changed": false, "summary": "unchanged", "points": [{"index":1,"change":"same","...":"..."}] },
+      "changes": ["code", "risk_level"],
+      "old_region": { "...": "..." }, "new_region": { "...": "..." }
+    }
+  ],
+  "unpaired_old": { "count": 1, "codes": ["C-03"], "regions": [{"code":"C-03","risk_level":"中风险","vertices":["..."]}] },
+  "unpaired_new": { "count": 1, "codes": ["D-04"], "regions": [{"code":"D-04","risk_level":"高风险","vertices":["..."]}] },
+  "completed_at": "2026-10-06 12:00:00"
+}
+```
 
 ```
 .
@@ -361,7 +484,7 @@ curl -X PUT http://localhost:8080/api/plans/1/rounds/5/results/A-01 \
 ├── docker/entrypoint.sh       # 容器入口：先迁移数据库再启动
 ├── package.json
 ├── server/
-│   ├── app.js                 # Express 路由、事务、版本/冲突、导出导入、巡检版发布
+│   ├── app.js                 # Express 路由、事务、版本/冲突、导出导入、巡检版、轮次、两版比对
 │   ├── config.js              # 环境变量配置
 │   ├── db.js                  # SQLite 初始化 / 建表（可独立 npm run migrate）
 │   └── image.js               # 纯 Node 解析 PNG/JPEG 尺寸与损坏检测
@@ -370,15 +493,18 @@ curl -X PUT http://localhost:8080/api/plans/1/rounds/5/results/A-01 \
 ├── public/
 │   ├── index.html             # 单页界面（列表 + SVG 编辑器 + 发布面板）
 │   ├── inspector.html         # 只读巡检页（按发布序号查看旧版/最新版；页内发起/查看巡检轮次）
-│   ├── inspector.js           # 巡检页：冻结快照渲染 + 缩放/平移/版本切换 + 轮次发起/历史
+│   ├── inspector.js           # 巡检页：冻结快照渲染 + 缩放/平移/版本切换 + 轮次发起/历史 + 两版比对入口
 │   ├── round.html             # 巡检轮次页（逐区填写正常/隐患；完成后只读）
 │   ├── round.js               # 轮次页：轮次版本乐观锁、冲突保留、进度、冻结画布交互
+│   ├── compare.html           # 区域沿革比对页（两版冻结图纸与清单并排；确认/解除/手动改配）
+│   ├── compare.js             # 比对页：同编号建议、配对草稿乐观锁、冲突保留、只读差异复看
 │   ├── styles.css
 │   └── app.js                 # 缩放/平移/绘制/冲突保留/轮询协作/发布交互
 └── tests/
     ├── geometry.test.js       # 几何规则单元测试
     ├── publications.test.js   # 巡检版发布/幂等/冲突/冻结不变性 端到端测试
-    └── rounds.test.js         # 巡检轮次：发起/逐区填写/冲突/完成门槛/只读/冻结 端到端测试
+    ├── rounds.test.js         # 巡检轮次：发起/逐区填写/冲突/完成门槛/只读/冻结 端到端测试
+    └── comparisons.test.js    # 区域沿革比对：创建拒绝/建议/配对乐观锁/差异生成/只读冻结 端到端测试
 ```
 
 ## 八、常见问题

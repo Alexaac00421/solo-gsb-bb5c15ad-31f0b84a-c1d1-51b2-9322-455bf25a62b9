@@ -74,8 +74,10 @@ async function init() {
   }
 
   buildSwitcher(list);
+  buildComparePicker(list);
 
   $('inspRoundsSection').classList.toggle('hidden', list.count === 0);
+  $('inspCompareSection').classList.toggle('hidden', list.count < 2);
   if (!list.count) {
     $('inspTitle').textContent = list.plan_name || '图纸';
     showEmpty(`图纸「${list.plan_name}」还没有发布过巡检版。`, false);
@@ -126,6 +128,96 @@ function buildSwitcher(list) {
     ? `共发布 ${list.count} 个巡检版，默认打开最新版（第 ${list.latest_seq} 号）。`
     : '';
 }
+
+/* ------------------------------ 区域沿革比对 ------------------------------ */
+
+function buildComparePicker(list) {
+  const oldSel = $('cmpOldSeq');
+  const newSel = $('cmpNewSeq');
+  oldSel.innerHTML = '';
+  newSel.innerHTML = '';
+  // 下拉按序号升序，便于先选旧版再选新版
+  const pubs = [...list.publications].sort((a, b) => a.seq - b.seq);
+  for (const p of pubs) {
+    oldSel.appendChild(new Option(`#${p.seq} · v${p.plan_version} · ${p.region_count} 区`, p.seq));
+    newSel.appendChild(new Option(`#${p.seq} · v${p.plan_version} · ${p.region_count} 区`, p.seq));
+  }
+  if (pubs.length >= 2) {
+    oldSel.value = String(pubs[pubs.length - 2].seq);
+    newSel.value = String(pubs[pubs.length - 1].seq);
+  }
+  loadComparisons();
+}
+
+async function loadComparisons() {
+  const ul = $('inspCompareList');
+  const msg = $('inspCompareMsg');
+  ul.innerHTML = '';
+  msg.textContent = '';
+  let data;
+  try {
+    data = await apiGet(`/api/plans/${planId}/comparisons`);
+  } catch (err) {
+    msg.textContent = '比对历史加载失败：' + err.message;
+    $('inspCompareCount').textContent = '';
+    return;
+  }
+  $('inspCompareCount').textContent = `（${data.count}）`;
+  for (const c of data.comparisons) {
+    const done = c.status === 'completed';
+    const li = document.createElement('li');
+    li.className = 'round-history-item' + (done ? ' done' : 'live');
+    li.innerHTML = `
+      <div class="round-history-head">
+        <span class="round-seq">#${c.older_seq} → #${c.newer_seq}</span>
+        <span class="round-status-tag">${done ? '✅ 差异已生成（只读）' : '🚧 配对中'}</span>
+      </div>
+      <div class="round-progress-text muted">
+        已配对 ${c.pair_count} · 旧版 ${c.older_region_count} 区 / 新版 ${c.newer_region_count} 区
+        ${c.inspector ? '· ' + esc(c.inspector) : ''}
+      </div>
+      <div class="round-history-foot muted">
+        ${done ? '完成于 ' + esc(c.completed_at || '') : '更新于 ' + esc(c.updated_at || '')}
+        <span class="round-history-actions"></span>
+      </div>`;
+    const openBtn = document.createElement('a');
+    openBtn.className = 'btn';
+    openBtn.textContent = done ? '复看差异' : '继续配对';
+    openBtn.href = `/compare.html?plan=${planId}&comparison=${c.id}`;
+    openBtn.target = '_blank';
+    openBtn.rel = 'noopener';
+    li.querySelector('.round-history-actions').appendChild(openBtn);
+    ul.appendChild(li);
+  }
+}
+
+$('btnStartCompare').addEventListener('click', async () => {
+  const olderSeq = Number($('cmpOldSeq').value);
+  const newerSeq = Number($('cmpNewSeq').value);
+  const btn = $('btnStartCompare');
+  const msg = $('inspCompareMsg');
+  if (!Number.isInteger(olderSeq) || !Number.isInteger(newerSeq)) {
+    msg.textContent = '请先选择两个已发布版本';
+    return;
+  }
+  if (olderSeq >= newerSeq) {
+    msg.textContent = olderSeq === newerSeq
+      ? '旧版与新版不能相同，请选择两个不同版本'
+      : '版本顺序颠倒：旧版序号必须小于新版序号';
+    return;
+  }
+  msg.textContent = '';
+  btn.disabled = true;
+  try {
+    const res = await apiPost(`/api/plans/${planId}/comparisons`, { older_seq: olderSeq, newer_seq: newerSeq });
+    window.open(`/compare.html?plan=${planId}&comparison=${res.comparison.id}`, '_blank', 'noopener');
+    await loadComparisons();
+  } catch (err) {
+    msg.textContent = err.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 async function loadPublication(seq) {
   const data = await apiGet(`/api/plans/${planId}/publications/${seq}`);

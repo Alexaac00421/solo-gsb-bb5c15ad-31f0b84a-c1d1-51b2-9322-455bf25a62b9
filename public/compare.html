@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>区域沿革比对 · 展馆平面图协作标注</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="inspector-body">
+  <header class="topbar inspector-topbar">
+    <div class="brand">
+      <span class="logo">▱</span> 区域沿革比对
+      <span class="tagline">同一图纸两个已发布巡检版 · 同编号仅为建议 · 完成后差异结果只读</span>
+    </div>
+    <div class="top-actions" id="cmpActions"></div>
+  </header>
+
+  <main id="cmpMain" class="compare-main">
+    <aside class="panel compare-panel">
+      <div class="panel-section">
+        <a class="btn link" id="cmpBack" href="#">← 返回巡检版页面</a>
+        <h2 id="cmpTitle">加载中…</h2>
+        <div class="meta-row" id="cmpBadges"></div>
+      </div>
+
+      <!-- 进行中：配对工作区 -->
+      <div id="cmpWorkspace">
+        <div class="panel-section">
+          <h3>同编号配对建议 <span id="cmpSugCount" class="muted"></span></h3>
+          <p class="hint">编号可能改名或被复用，<strong>同编号不会自动配对</strong>，请逐条确认或在下方手动配对。</p>
+          <div class="btn-row" style="margin-top:6px">
+            <button class="btn" id="btnAdoptAll">全部采纳建议</button>
+            <button class="btn" id="btnRefresh">刷新最新状态</button>
+          </div>
+          <ul id="cmpSuggestions" class="suggestion-list"></ul>
+        </div>
+
+        <div class="panel-section grow">
+          <h3>已确认配对 <span id="cmpPairCount" class="muted"></span></h3>
+          <div id="cmpValidate" class="validate-msg"></div>
+          <ul id="cmpPairs" class="pair-list"></ul>
+          <button class="btn wide" id="btnAddPair" style="margin-top:8px">＋ 手动添加一对</button>
+          <p class="hint" id="cmpLocalHint"></p>
+        </div>
+
+        <div class="panel-section">
+          <div class="btn-row">
+            <button class="btn" id="btnSaveDraft">💾 保存草稿</button>
+            <button class="btn primary" id="btnComplete">🔒 确认全部并生成差异</button>
+          </div>
+          <p class="hint">保存携带所见比对版本：他人先改会返回冲突与最新配对，你未提交的选择仍保留。两侧未配对区域会自动列入结果。</p>
+        </div>
+      </div>
+
+      <!-- 完成后：只读差异结果 -->
+      <div id="cmpResultPanel" hidden>
+        <div class="panel-section">
+          <div class="round-done-box">
+            <strong>✅ 差异结果已生成（只读）</strong>
+            <p class="muted" id="cmpDoneText"></p>
+            <p class="hint">结果只取自两个发布版的冻结快照：之后图纸编辑、重新发布都不会改变本页内容。</p>
+          </div>
+        </div>
+        <div class="panel-section grow">
+          <h3>逐对差异 <span id="cmpResPairCount" class="muted"></span></h3>
+          <ul id="cmpResultPairs" class="result-pair-list"></ul>
+        </div>
+        <div class="panel-section">
+          <h3>未配对区域</h3>
+          <div id="cmpUnpaired"></div>
+        </div>
+      </div>
+    </aside>
+
+    <div class="compare-stage">
+      <section class="compare-side" id="sideOld">
+        <div class="compare-side-head">
+          <strong>旧版（#<span id="oldSeq">-</span>）</strong>
+          <span class="muted" id="oldMeta"></span>
+        </div>
+        <ul class="compare-region-list" id="oldRegionList"></ul>
+        <div class="compare-canvas-wrap">
+          <svg id="oldSvg" xmlns="http://www.w3.org/2000/svg">
+            <g id="oldViewport">
+              <rect id="oldBg" x="0" y="0" fill="#ffffff"></rect>
+              <image id="oldImage" x="0" y="0"></image>
+              <g id="oldRegionLayer"></g>
+            </g>
+          </svg>
+          <div class="canvas-status"><span id="oldZoom"></span></div>
+        </div>
+      </section>
+
+      <section class="compare-side" id="sideNew">
+        <div class="compare-side-head">
+          <strong>新版（#<span id="newSeq">-</span>）</strong>
+          <span class="muted" id="newMeta"></span>
+        </div>
+        <ul class="compare-region-list" id="newRegionList"></ul>
+        <div class="compare-canvas-wrap">
+          <svg id="newSvg" xmlns="http://www.w3.org/2000/svg">
+            <g id="newViewport">
+              <rect id="newBg" x="0" y="0" fill="#ffffff"></rect>
+              <image id="newImage" x="0" y="0"></image>
+              <g id="newRegionLayer"></g>
+            </g>
+          </svg>
+          <div class="canvas-status"><span id="newZoom"></span></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <div id="cmpEmpty" class="inspector-empty hidden">
+    <div class="empty-box">
+      <h2 id="cmpEmptyTitle">比对无法显示</h2>
+      <p class="muted" id="cmpEmptyText"></p>
+      <a class="btn primary" href="/">返回应用首页</a>
+    </div>
+  </div>
+
+  <div id="toasts" class="toasts"></div>
+  <script src="/compare.js"></script>
+</body>
+</html>

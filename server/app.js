@@ -1307,6 +1307,474 @@ app.post('/api/plans/:id/rounds/:roundId/complete', wrap((req, res) => {
   res.json({ ...roundDetail(fresh), message: `第 ${fresh.seq} 轮巡检已完成并锁定为只读` });
 }));
 
+/* ------------------- 区域沿革比对（两个已发布巡检版之间） ------------------- */
+
+const COMP_IN_PROGRESS = 'in_progress';
+const COMP_COMPLETED = 'completed';
+const MAX_PAIRS = 10000;
+
+function comparisonSummary(c) {
+  return {
+    id: c.id,
+    plan_id: c.plan_id,
+    older_seq: c.older_seq,
+    newer_seq: c.newer_seq,
+    plan_name: c.plan_name,
+    status: c.status,
+    version: c.version,
+    inspector: c.inspector,
+    older_region_count: c.older_region_count,
+    newer_region_count: c.newer_region_count,
+    pair_count: c.pair_count,
+    created_at: c.created_at,
+    updated_at: c.updated_at,
+    completed_at: c.completed_at,
+  };
+}
+
+/** 比对详情（草稿态）：两侧冻结区域、同编号建议、已确认配对 */
+function comparisonDetail(row) {
+  const older = db.prepare('SELECT * FROM publications WHERE id = ?').get(row.older_pub_id);
+  const newer = db.prepare('SELECT * FROM publications WHERE id = ?').get(row.newer_pub_id);
+  if (!older || !newer) throw new ApiError(404, 'NO_PUBLICATION', '比对关联的巡检版不存在');
+  const oldRegions = JSON.parse(older.regions_json);
+  const newRegions = JSON.parse(newer.regions_json);
+  const pairRows = db.prepare(
+    'SELECT old_code, new_code FROM region_comparison_pairs WHERE comparison_id = ? ORDER BY id'
+  ).all(row.id);
+  const pairs = pairRows.map((p) => ({ old_code: p.old_code, new_code: p.new_code }));
+  const usedOld = new Set(pairs.map((p) => p.old_code));
+  const usedNew = new Set(pairs.map((p) => p.new_code));
+  // 同编号仅作配对「建议」：编号改名 / 复用不能自动认定为同一区域，必须用户确认；
+  // 任一侧编号已被已确认配对占用的建议不再给出（避免必然冲突）
+  const suggestions = oldRegions
+    .filter((r) => newRegions.some((x) => x.code === r.code))
+    .filter((r) => !usedOld.has(r.code) && !usedNew.has(r.code))
+    .map((r) => ({ old_code: r.code, new_code: r.code }));
+  return {
+    comparison: comparisonSummary({
+      ...row,
+      older_region_count: oldRegions.length,
+      newer_region_count: newRegions.length,
+      pair_count: pairs.length,
+    }),
+    older: {
+      id: older.id,
+      seq: older.seq,
+      plan_version: older.plan_version,
+      plan_name: older.plan_name,
+      width: older.width,
+      height: older.height,
+      image_mime: older.image_mime,
+      region_count: oldRegions.length,
+      published_at: older.published_at,
+      regions: oldRegions,
+    },
+    newer: {
+      id: newer.id,
+      seq: newer.seq,
+      plan_version: newer.plan_version,
+      plan_name: newer.plan_name,
+      width: newer.width,
+      height: newer.height,
+      image_mime: newer.image_mime,
+      region_count: newRegions.length,
+      published_at: newer.published_at,
+      regions: newRegions,
+    },
+    suggestions,
+    pairs,
+  };
+}
+
+/** 解析比对任务 id 并校验属于该图纸（杜绝跨图纸访问） */
+function getComparison(plan, rawId) {
+  const id = Number(rawId);
+  if (!Number.isInteger(id) || id < 1) {
+    throw new ApiError(400, 'VALIDATION_ERROR', '比对任务 id 必须为正整数');
+  }
+  const row = db.prepare('SELECT * FROM region_comparisons WHERE id = ? AND plan_id = ?')
+    .get(id, plan.id);
+  if (!row) {
+    throw new ApiError(404, 'COMPARISON_NOT_FOUND',
+      `图纸「${plan.name}」不存在 id=${id} 的区域比对任务（可能未创建或不属于该图纸）`);
+  }
+  return row;
+}
+
+/**
+ * 校验并规范化整份配对（不做任何写入）。
+ * 不变量：必须是数组；每对两侧编号非空且分别存在于对应冻结版本；
+ * 任一编号至多出现一次（重复占用 → 明确拒绝，由调用方保证不留部分配对）。
+ */
+function validatePairs(input, oldRegions, newRegions) {
+  if (!Array.isArray(input)) {
+    throw new ApiError(400, 'VALIDATION_ERROR', 'pairs 必须是数组：[{old_code, new_code}, ...]');
+  }
+  if (input.length > MAX_PAIRS) {
+    throw new ApiError(400, 'VALIDATION_ERROR', `配对数量超过上限 ${MAX_PAIRS}`);
+  }
+  const oldSet = new Set(oldRegions.map((r) => r.code));
+  const newSet = new Set(newRegions.map((r) => r.code));
+  const seenOld = new Set();
+  const seenNew = new Set();
+  return input.map((p, i) => {
+    const where = `第 ${i + 1} 对`;
+    if (!p || typeof p !== 'object') {
+      throw new ApiError(400, 'VALIDATION_ERROR', `${where} 不是对象`);
+    }
+    const oldCode = String(p.old_code == null ? '' : p.old_code).trim();
+    const newCode = String(p.new_code == null ? '' : p.new_code).trim();
+    if (!oldCode) throw new ApiError(400, 'VALIDATION_ERROR', `${where} 缺少旧版区域编号 old_code`);
+    if (!newCode) throw new ApiError(400, 'VALIDATION_ERROR', `${where} 缺少新版区域编号 new_code`);
+    if (!oldSet.has(oldCode)) {
+      throw new ApiError(400, 'UNKNOWN_REGION',
+        `${where}：旧版区域编号「${oldCode}」不在旧版冻结区域中`);
+    }
+    if (!newSet.has(newCode)) {
+      throw new ApiError(400, 'UNKNOWN_REGION',
+        `${where}：新版区域编号「${newCode}」不在新版冻结区域中`);
+    }
+    if (seenOld.has(oldCode)) {
+      throw new ApiError(400, 'REGION_ALREADY_PAIRED',
+        `旧版区域「${oldCode}」已参与另一对配对，每个区域至多参与一对`);
+    }
+    if (seenNew.has(newCode)) {
+      throw new ApiError(400, 'REGION_ALREADY_PAIRED',
+        `新版区域「${newCode}」已参与另一对配对，每个区域至多参与一对`);
+    }
+    seenOld.add(oldCode);
+    seenNew.add(newCode);
+    return { old_code: oldCode, new_code: newCode };
+  });
+}
+
+function requireComparisonVersion(body) {
+  if (!body || body.version == null) {
+    throw new ApiError(400, 'VALIDATION_ERROR', '必须携带提交时所见的比对版本 version（正整数）');
+  }
+  const v = Number(body.version);
+  if (!Number.isInteger(v) || v < 1) {
+    throw new ApiError(400, 'VALIDATION_ERROR', '比对版本 version 必须为正整数');
+  }
+  return v;
+}
+
+/** 顶点变化：按序号逐点比较（坐标已在保存时四舍五入到 0.001） */
+function describeVertexChanges(oldVerts, newVerts) {
+  const n = Math.max(oldVerts.length, newVerts.length);
+  const points = [];
+  let moved = 0;
+  for (let i = 0; i < n; i++) {
+    const o = oldVerts[i];
+    const nw = newVerts[i];
+    if (o && nw) {
+      const dx = Math.round((nw.x - o.x) * 1000) / 1000;
+      const dy = Math.round((nw.y - o.y) * 1000) / 1000;
+      const changed = dx !== 0 || dy !== 0;
+      if (changed) moved += 1;
+      points.push({
+        index: i + 1,
+        change: changed ? 'moved' : 'same',
+        old: { x: o.x, y: o.y },
+        new: { x: nw.x, y: nw.y },
+        delta: { dx, dy },
+      });
+    } else if (nw) {
+      points.push({ index: i + 1, change: 'added', old: null, new: { x: nw.x, y: nw.y } });
+    } else if (o) {
+      points.push({ index: i + 1, change: 'removed', old: { x: o.x, y: o.y }, new: null });
+    }
+  }
+  const sameCount = oldVerts.length === newVerts.length && moved === 0;
+  const summary = sameCount ? 'unchanged'
+    : oldVerts.length !== newVerts.length ? 'vertex_count_changed' : 'moved';
+  return {
+    changed: !sameCount,
+    summary,
+    old_count: oldVerts.length,
+    new_count: newVerts.length,
+    moved_count: moved,
+    added_count: points.filter((p) => p.change === 'added').length,
+    removed_count: points.filter((p) => p.change === 'removed').length,
+    points,
+  };
+}
+
+/**
+ * 由两侧冻结区域 + 已确认配对生成最终差异结果。
+ * 结果完全取自 publications 的冻结快照：不随编辑态或后续发布改变。
+ */
+function buildComparisonResult(row) {
+  const older = db.prepare('SELECT * FROM publications WHERE id = ?').get(row.older_pub_id);
+  const newer = db.prepare('SELECT * FROM publications WHERE id = ?').get(row.newer_pub_id);
+  const oldRegions = JSON.parse(older.regions_json);
+  const newRegions = JSON.parse(newer.regions_json);
+  const oldByCode = new Map(oldRegions.map((r) => [r.code, r]));
+  const newByCode = new Map(newRegions.map((r) => [r.code, r]));
+  const pairRows = db.prepare(
+    'SELECT old_code, new_code FROM region_comparison_pairs WHERE comparison_id = ? ORDER BY id'
+  ).all(row.id);
+
+  const resultPairs = pairRows.map((p) => {
+    const o = oldByCode.get(p.old_code);
+    const nw = newByCode.get(p.new_code);
+    const riskChanged = o.risk_level !== nw.risk_level;
+    const codeChanged = o.code !== nw.code;
+    const vertices = describeVertexChanges(o.vertices, nw.vertices);
+    const changes = [];
+    if (codeChanged) changes.push('code');
+    if (riskChanged) changes.push('risk_level');
+    if (vertices.changed) changes.push('vertices');
+    return {
+      old_code: o.code,
+      new_code: nw.code,
+      code_changed: codeChanged,
+      risk_level: { old: o.risk_level, new: nw.risk_level, changed: riskChanged },
+      vertices,
+      changes,
+      // 完整冻结区域随结果保存：结果可独立复看，不再依赖外部渲染上下文
+      old_region: { code: o.code, risk_level: o.risk_level, vertices: o.vertices },
+      new_region: { code: nw.code, risk_level: nw.risk_level, vertices: nw.vertices },
+    };
+  });
+
+  const usedOld = new Set(pairRows.map((p) => p.old_code));
+  const usedNew = new Set(pairRows.map((p) => p.new_code));
+  const unpaired = (regions, used) => {
+    const list = regions
+      .filter((r) => !used.has(r.code))
+      .map((r) => ({ code: r.code, risk_level: r.risk_level, vertices: r.vertices }));
+    return { count: list.length, codes: list.map((r) => r.code), regions: list };
+  };
+  const unpairedOld = unpaired(oldRegions, usedOld);
+  const unpairedNew = unpaired(newRegions, usedNew);
+
+  return {
+    comparison_id: row.id,
+    plan_id: row.plan_id,
+    plan_name: row.plan_name,
+    older: {
+      seq: older.seq,
+      plan_version: older.plan_version,
+      plan_name: older.plan_name,
+      width: older.width,
+      height: older.height,
+      image_mime: older.image_mime,
+      published_at: older.published_at,
+      region_count: oldRegions.length,
+    },
+    newer: {
+      seq: newer.seq,
+      plan_version: newer.plan_version,
+      plan_name: newer.plan_name,
+      width: newer.width,
+      height: newer.height,
+      image_mime: newer.image_mime,
+      published_at: newer.published_at,
+      region_count: newRegions.length,
+    },
+    pair_count: resultPairs.length,
+    changed_pair_count: resultPairs.filter((p) => p.changes.length).length,
+    pairs: resultPairs,
+    unpaired_old: unpairedOld,
+    unpaired_new: unpairedNew,
+    completed_at: row.completed_at,
+  };
+}
+
+/**
+ * 创建区域沿革比对任务：必须是同一图纸两个已发布巡检版，旧版序号 < 新版序号。
+ * 跨图纸、倒序、相同版本、不存在版本一律 4xx 拒绝，不创建任何任务。
+ */
+app.post('/api/plans/:id/comparisons', wrap((req, res) => {
+  const plan = getPlanOr404(req.params.id);
+  const body = req.body || {};
+
+  function parseSeq(raw, label) {
+    const v = Number(raw);
+    if (!Number.isInteger(v) || v < 1) {
+      throw new ApiError(400, 'VALIDATION_ERROR', `${label} 必须为正整数的发布序号（不支持 latest，请先解析为具体序号）`);
+    }
+    return v;
+  }
+  const olderSeq = parseSeq(body.older_seq, '旧版序号 older_seq');
+  const newerSeq = parseSeq(body.newer_seq, '新版序号 newer_seq');
+  if (olderSeq === newerSeq) {
+    throw new ApiError(400, 'SAME_PUBLICATION',
+      `旧版与新版不能是同一个巡检版（均为 #${olderSeq}）：沿革比对需要两个不同的已发布版本`);
+  }
+  if (olderSeq > newerSeq) {
+    throw new ApiError(400, 'REVERSED_ORDER',
+      `版本顺序颠倒：旧版 #${olderSeq} 不能晚于新版 #${newerSeq}，旧版序号必须小于新版序号`);
+  }
+  const inspector = String(body.inspector == null ? '' : body.inspector).trim();
+  if (inspector.length > 100) {
+    throw new ApiError(400, 'VALIDATION_ERROR', '巡检人名称不能超过 100 个字符');
+  }
+  // 两侧必须都存在：缺失明确 404 NO_PUBLICATION，不留下任何任务
+  const older = getPublication(plan, olderSeq);
+  const newer = getPublication(plan, newerSeq);
+
+  const comparisonId = db.transaction(() => {
+    const info = db.prepare(`
+      INSERT INTO region_comparisons
+        (plan_id, older_pub_id, newer_pub_id, older_seq, newer_seq, plan_name, status, version, inspector)
+      VALUES (@plan_id, @older_id, @newer_id, @older_seq, @newer_seq, @plan_name, @status, 1, @inspector)
+    `).run({
+      plan_id: plan.id,
+      older_id: older.id,
+      newer_id: newer.id,
+      older_seq: older.seq,
+      newer_seq: newer.seq,
+      plan_name: plan.name,
+      status: COMP_IN_PROGRESS,
+      inspector,
+    });
+    return info.lastInsertRowid;
+  })();
+
+  const row = db.prepare('SELECT * FROM region_comparisons WHERE id = ?').get(comparisonId);
+  res.status(201).json({
+    ...comparisonDetail(row),
+    message: `已创建比对任务：#${older.seq} → #${newer.seq}（旧版 ${older.region_count} 区，新版 ${newer.region_count} 区）。同编号仅为建议，请确认或手动配对。`,
+  });
+}));
+
+// 图纸维度的比对任务列表（最新在前）
+app.get('/api/plans/:id/comparisons', wrap((req, res) => {
+  const plan = getPlanOr404(req.params.id);
+  const rows = db.prepare(`
+    SELECT c.*,
+      (SELECT po.region_count FROM publications po WHERE po.id = c.older_pub_id) AS older_region_count,
+      (SELECT pn.region_count FROM publications pn WHERE pn.id = c.newer_pub_id) AS newer_region_count,
+      (SELECT COUNT(*) FROM region_comparison_pairs cp WHERE cp.comparison_id = c.id) AS pair_count
+    FROM region_comparisons c
+    WHERE c.plan_id = ?
+    ORDER BY c.id DESC
+  `).all(plan.id);
+  res.json({
+    plan_id: plan.id,
+    plan_name: plan.name,
+    count: rows.length,
+    comparisons: rows.map(comparisonSummary),
+  });
+}));
+
+// 比对任务详情：进行中返回草稿（冻结区域 + 建议 + 已确认配对）；完成后返回只读差异结果
+app.get('/api/plans/:id/comparisons/:cid', wrap((req, res) => {
+  const plan = getPlanOr404(req.params.id);
+  const row = getComparison(plan, req.params.cid);
+  if (row.status === COMP_COMPLETED) {
+    return res.json({ status: COMP_COMPLETED, result: JSON.parse(row.result_json) });
+  }
+  res.json({ status: COMP_IN_PROGRESS, ...comparisonDetail(row) });
+}));
+
+/**
+ * 保存配对草稿（整份替换语义）。
+ * 必须携带所见比对版本 version：他人先保存 → 409 COMPARISON_VERSION_CONFLICT，
+ * 响应 server 字段附最新配对状态，本次提交不生效；完成后再写 → 409 COMPARISON_COMPLETED。
+ * 任何校验失败（未知编号 / 重复占用）都在写入前拒绝，不留下部分配对。
+ */
+app.put('/api/plans/:id/comparisons/:cid/pairs', wrap((req, res) => {
+  const plan = getPlanOr404(req.params.id);
+  const row = getComparison(plan, req.params.cid);
+  const expectedVersion = requireComparisonVersion(req.body);
+  const pairs = validatePairs(
+    (req.body || {}).pairs,
+    JSON.parse(db.prepare('SELECT regions_json FROM publications WHERE id = ?').get(row.older_pub_id).regions_json),
+    JSON.parse(db.prepare('SELECT regions_json FROM publications WHERE id = ?').get(row.newer_pub_id).regions_json)
+  );
+
+  const out = db.transaction(() => {
+    const cur = db.prepare('SELECT * FROM region_comparisons WHERE id = ?').get(row.id);
+    if (cur.status === COMP_COMPLETED) {
+      throw new ApiError(409, 'COMPARISON_COMPLETED',
+        `该比对任务已于 ${cur.completed_at} 完成，差异结果为只读，配对不能再修改`,
+        { server: { status: COMP_COMPLETED, result: JSON.parse(cur.result_json) } });
+    }
+    if (cur.version !== expectedVersion) {
+      throw new ApiError(409, 'COMPARISON_VERSION_CONFLICT',
+        `配对在你加载后已被其他人更新（你的基准版本 v${expectedVersion}，当前为 v${cur.version}）。` +
+        `本次保存未生效，你未提交的选择已保留，请对照最新配对状态后重试。`,
+        { server: { status: COMP_IN_PROGRESS, ...comparisonDetail(cur) } });
+    }
+    db.prepare('DELETE FROM region_comparison_pairs WHERE comparison_id = ?').run(cur.id);
+    const stmt = db.prepare(
+      'INSERT INTO region_comparison_pairs (comparison_id, old_code, new_code) VALUES (?, ?, ?)'
+    );
+    for (const p of pairs) stmt.run(cur.id, p.old_code, p.new_code);
+    db.prepare("UPDATE region_comparisons SET version = version + 1, updated_at = datetime('now') WHERE id = ?")
+      .run(cur.id);
+    return cur.id;
+  })();
+
+  const fresh = db.prepare('SELECT * FROM region_comparisons WHERE id = ?').get(out);
+  res.json({
+    status: COMP_IN_PROGRESS,
+    ...comparisonDetail(fresh),
+    message: `配对草稿已保存（${pairs.length} 对，比对版本 v${fresh.version}）`,
+  });
+}));
+
+/**
+ * 完成比对：锁定配对并生成可复看的差异结果（逐对的编号/风险等级/顶点变化 + 两侧未配对区域）。
+ * body 可带当前页所见 pairs（一并校验，避免漏存）；带 version 做乐观锁。
+ * 完成后任务只读：结果不随编辑态或后续发布改变。
+ */
+app.post('/api/plans/:id/comparisons/:cid/complete', wrap((req, res) => {
+  const plan = getPlanOr404(req.params.id);
+  const row = getComparison(plan, req.params.cid);
+  const expectedVersion = requireComparisonVersion(req.body);
+
+  const out = db.transaction(() => {
+    const cur = db.prepare('SELECT * FROM region_comparisons WHERE id = ?').get(row.id);
+    if (cur.status === COMP_COMPLETED) {
+      throw new ApiError(409, 'COMPARISON_COMPLETED',
+        `该比对任务已于 ${cur.completed_at} 完成，差异结果为只读`,
+        { server: { status: COMP_COMPLETED, result: JSON.parse(cur.result_json) } });
+    }
+    if (cur.version !== expectedVersion) {
+      throw new ApiError(409, 'COMPARISON_VERSION_CONFLICT',
+        `配对在你加载后已被其他人更新（你的基准版本 v${expectedVersion}，当前为 v${cur.version}）。` +
+        `为避免在不知情时锁定错误配对，本次完成被拒绝，你未提交的选择已保留。`,
+        { server: { status: COMP_IN_PROGRESS, ...comparisonDetail(cur) } });
+    }
+    // 若提交携带所见配对，先整份校验并替换（与保存草稿同样的全有/全无语义）
+    if (req.body && Array.isArray(req.body.pairs)) {
+      const older = db.prepare('SELECT regions_json FROM publications WHERE id = ?').get(cur.older_pub_id);
+      const newer = db.prepare('SELECT regions_json FROM publications WHERE id = ?').get(cur.newer_pub_id);
+      const pairs = validatePairs(req.body.pairs,
+        JSON.parse(older.regions_json), JSON.parse(newer.regions_json));
+      db.prepare('DELETE FROM region_comparison_pairs WHERE comparison_id = ?').run(cur.id);
+      const stmt = db.prepare(
+        'INSERT INTO region_comparison_pairs (comparison_id, old_code, new_code) VALUES (?, ?, ?)'
+      );
+      for (const p of pairs) stmt.run(cur.id, p.old_code, p.new_code);
+    }
+    const done = db.prepare("SELECT datetime('now') AS t").get().t;
+    const locked = db.prepare('SELECT * FROM region_comparisons WHERE id = ?').get(cur.id);
+    const result = buildComparisonResult({ ...locked, completed_at: done });
+    db.prepare(`
+      UPDATE region_comparisons
+      SET status = ?, completed_at = ?, result_json = ?,
+          version = version + 1, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(COMP_COMPLETED, done, JSON.stringify(result), cur.id);
+    return cur.id;
+  })();
+
+  const fresh = db.prepare('SELECT * FROM region_comparisons WHERE id = ?').get(out);
+  const result = JSON.parse(fresh.result_json);
+  res.status(201).json({
+    status: COMP_COMPLETED,
+    result,
+    message: `差异结果已生成并锁定：${result.pair_count} 对配对（${result.changed_pair_count} 对有变化），` +
+      `旧版未配对 ${result.unpaired_old.count} 个，新版未配对 ${result.unpaired_new.count} 个`,
+  });
+}));
+
 /* ------------------------------- 错误处理 ------------------------------- */
 
 app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars

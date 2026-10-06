@@ -33,6 +33,20 @@
         <p class="hint" id="inspSwitchHint"></p>
       </div>
 
+      <div class="panel-section" id="inspCompareSection">
+        <h3>区域沿革比对 <span id="inspCompareCount" class="muted"></span></h3>
+        <p class="hint">选择同一图纸的旧版与较新新版，并排核对区域沿革：同编号仅作配对建议，可确认、解除或手动改配；完成后差异结果只读。</p>
+        <label class="compare-pick">旧版
+          <select id="cmpOldSeq"></select>
+        </label>
+        <label class="compare-pick">新版（较新）
+          <select id="cmpNewSeq"></select>
+        </label>
+        <button class="btn primary wide" id="btnStartCompare" style="margin-top:6px">🔀 开始两版比对</button>
+        <p class="pub-empty" id="inspCompareMsg"></p>
+        <ul class="round-history" id="inspCompareList"></ul>
+      </div>
+
       <div class="panel-section" id="inspRoundsSection">
         <h3>巡检轮次 <span id="inspRoundCount" class="muted"></span></h3>
         <p class="hint">基于当前发布版冻结的区域编号发起巡检，逐区填写「正常 / 隐患」；同一发布版可开展多轮，完成后该轮只读。</p>

@@ -110,6 +110,42 @@ function openDb() {
 
     CREATE UNIQUE INDEX IF NOT EXISTS idx_results_round_code
       ON inspection_results(round_id, code);
+
+    -- 区域沿革比对：同一图纸两个已发布巡检版之间的区域配对任务；完成后差异结果只读
+    CREATE TABLE IF NOT EXISTS region_comparisons (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      plan_id         INTEGER NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+      older_pub_id    INTEGER NOT NULL REFERENCES publications(id) ON DELETE CASCADE,
+      newer_pub_id    INTEGER NOT NULL REFERENCES publications(id) ON DELETE CASCADE,
+      older_seq       INTEGER NOT NULL,          -- 冗余冻结：旧版发布序号
+      newer_seq       INTEGER NOT NULL,          -- 冗余冻结：新版发布序号
+      plan_name       TEXT NOT NULL,             -- 冗余冻结：创建时的图纸名
+      status          TEXT NOT NULL DEFAULT 'in_progress', -- in_progress | completed
+      version         INTEGER NOT NULL DEFAULT 1, -- 草稿乐观锁：每次有效配对写入 +1，完成再 +1
+      inspector       TEXT NOT NULL DEFAULT '',
+      result_json     TEXT,                      -- 完成时写入的差异结果快照，之后永不改变
+      created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+      completed_at    TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_comparisons_plan
+      ON region_comparisons(plan_id, id);
+
+    -- 配对行：旧版/新版各一个区域编号；同一比对任务内每个区域至多参与一对（唯一索引兜底）
+    CREATE TABLE IF NOT EXISTS region_comparison_pairs (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      comparison_id   INTEGER NOT NULL REFERENCES region_comparisons(id) ON DELETE CASCADE,
+      old_code        TEXT NOT NULL,
+      new_code        TEXT NOT NULL,
+      created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- 每个区域在一次比对中至多出现一次：重复占用在数据库层也无法落库
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_comp_pairs_old
+      ON region_comparison_pairs(comparison_id, old_code);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_comp_pairs_new
+      ON region_comparison_pairs(comparison_id, new_code);
   `);
 
   return db;
