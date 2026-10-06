@@ -110,6 +110,49 @@ function openDb() {
 
     CREATE UNIQUE INDEX IF NOT EXISTS idx_results_round_code
       ON inspection_results(round_id, code);
+
+    -- 版本对比任务：同一图纸两个已发布巡检版（旧版 → 较新的新版）之间的区域沿革核对。
+    -- 完成后差异结果冻结在 result_json，只读、不再随编辑态或后续发布改变
+    CREATE TABLE IF NOT EXISTS comparisons (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      plan_id            INTEGER NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+      seq                INTEGER NOT NULL,          -- 图纸内对比任务序号，从 1 递增
+      old_publication_id INTEGER NOT NULL REFERENCES publications(id) ON DELETE CASCADE,
+      new_publication_id INTEGER NOT NULL REFERENCES publications(id) ON DELETE CASCADE,
+      old_seq            INTEGER NOT NULL,          -- 冗余冻结：旧版发布序号
+      new_seq            INTEGER NOT NULL,          -- 冗余冻结：新版发布序号
+      plan_name          TEXT    NOT NULL,          -- 冗余冻结：创建时图纸名
+      status             TEXT    NOT NULL DEFAULT 'draft', -- draft | completed
+      version            INTEGER NOT NULL DEFAULT 1,       -- 乐观锁：每次有效写入 +1，完成再 +1
+      creator            TEXT    NOT NULL DEFAULT '',
+      result_json        TEXT,                        -- 完成时冻结的差异结果（只读）
+      created_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+      updated_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+      completed_at       TEXT
+    );
+
+    -- 对比任务序号在图纸内唯一
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_comparisons_plan_seq
+      ON comparisons(plan_id, seq);
+
+    CREATE INDEX IF NOT EXISTS idx_comparisons_plan
+      ON comparisons(plan_id, id);
+
+    -- 对比配对：旧版冻结区域编号 ↔ 新版冻结区域编号。
+    -- 两个唯一索引保证：旧版/新版的每个区域各至多参与一对（重复占用在数据库层被挡住）
+    CREATE TABLE IF NOT EXISTS comparison_pairs (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      comparison_id INTEGER NOT NULL REFERENCES comparisons(id) ON DELETE CASCADE,
+      old_code      TEXT    NOT NULL,          -- 旧版冻结区域编号
+      new_code      TEXT    NOT NULL,          -- 新版冻结区域编号
+      created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_cpairs_comp_old
+      ON comparison_pairs(comparison_id, old_code);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_cpairs_comp_new
+      ON comparison_pairs(comparison_id, new_code);
   `);
 
   return db;

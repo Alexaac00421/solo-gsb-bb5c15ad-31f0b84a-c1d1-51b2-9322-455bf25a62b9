@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>版本对比 · 展馆平面图协作标注</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="inspector-body">
+  <header class="topbar inspector-topbar">
+    <div class="brand">
+      <span class="logo">▱</span> 巡检版对比
+      <span class="tagline">同一图纸两个已发布巡检版的区域沿革核对 · 完成后差异结果只读</span>
+    </div>
+    <div class="top-actions" id="cmpActions"></div>
+  </header>
+
+  <main id="cmpMain" class="inspector-main">
+    <aside class="panel inspector-panel">
+      <div class="panel-section">
+        <a class="btn link" id="cmpBack" href="#">← 返回巡检版页面</a>
+        <h2 id="cmpTitle">加载中…</h2>
+        <div class="meta-row" id="cmpBadges"></div>
+      </div>
+
+      <div class="panel-section" id="cmpPairSection">
+        <h3>区域配对</h3>
+        <p class="hint">相同编号仅作为配对建议，确认后才进入配对；可解除或手动改配。
+          每侧每个区域至多参与一对；编号改名或复用不会被自动认定为同一区域。</p>
+        <div id="cmpSuggestBox"></div>
+        <p class="hint" id="cmpSelHint">手动配对：先在左侧旧版选一个区域，再在右侧新版选一个区域。</p>
+        <div class="btn-row" style="margin-top:8px">
+          <button class="btn" id="btnAcceptAll">全部确认建议</button>
+          <button class="btn primary" id="btnSavePairs">保存配对草稿</button>
+        </div>
+        <div class="btn-row" style="margin-top:8px">
+          <button class="btn" id="btnRefreshCmp">刷新最新状态</button>
+          <button class="btn primary" id="btnCompleteCmp">完成对比并生成结果</button>
+        </div>
+        <div id="cmpMsg" class="validate-msg"></div>
+        <div id="cmpConflictBox" class="cmp-conflict hidden"></div>
+      </div>
+
+      <div class="panel-section" id="cmpDoneSection" hidden>
+        <div class="round-done-box">
+          <strong>✅ 对比已完成，结果只读</strong>
+          <p class="muted" id="cmpDoneText"></p>
+          <p class="hint">完成后的配对与差异结果不再改变；后续图纸编辑、换图或发布新版都不影响本页内容。</p>
+        </div>
+      </div>
+
+      <div class="panel-section grow" id="cmpPairsSection">
+        <h3>已配对 <span id="cmpPairCount" class="muted"></span></h3>
+        <ul id="cmpPairList" class="cmp-pair-list"></ul>
+      </div>
+
+      <div class="panel-section" id="cmpResultSection" hidden>
+        <h3>差异结果（只读）</h3>
+        <div id="cmpResultSummary"></div>
+        <ul id="cmpResultPairs" class="cmp-result-list"></ul>
+        <h3 style="margin-top:12px">未配对区域</h3>
+        <div id="cmpResultUnpaired"></div>
+      </div>
+    </aside>
+
+    <div class="compare-canvases">
+      <div class="compare-side">
+        <div class="compare-side-head" id="cmpOldHead">旧版</div>
+        <svg id="cmpSvgOld" xmlns="http://www.w3.org/2000/svg">
+          <g id="cmpViewportOld">
+            <rect id="cmpBgOld" x="0" y="0" fill="#ffffff"></rect>
+            <image id="cmpImageOld" x="0" y="0"></image>
+            <g id="cmpLayerOld"></g>
+          </g>
+        </svg>
+        <div class="canvas-status"><span id="cmpZoomOld"></span><span>旧版冻结图纸</span></div>
+        <ul id="cmpOldList" class="compare-region-list"></ul>
+      </div>
+      <div class="compare-side">
+        <div class="compare-side-head" id="cmpNewHead">新版</div>
+        <svg id="cmpSvgNew" xmlns="http://www.w3.org/2000/svg">
+          <g id="cmpViewportNew">
+            <rect id="cmpBgNew" x="0" y="0" fill="#ffffff"></rect>
+            <image id="cmpImageNew" x="0" y="0"></image>
+            <g id="cmpLayerNew"></g>
+          </g>
+        </svg>
+        <div class="canvas-status"><span id="cmpZoomNew"></span><span>新版冻结图纸</span></div>
+        <ul id="cmpNewList" class="compare-region-list"></ul>
+      </div>
+    </div>
+
+    <div id="cmpEmpty" class="inspector-empty hidden">
+      <div class="empty-box">
+        <h2 id="cmpEmptyTitle">对比任务无法显示</h2>
+        <p class="muted" id="cmpEmptyText"></p>
+        <a class="btn primary" href="/">返回应用首页</a>
+      </div>
+    </div>
+  </main>
+
+  <div id="toasts" class="toasts"></div>
+  <script src="/compare.js"></script>
+</body>
+</html>

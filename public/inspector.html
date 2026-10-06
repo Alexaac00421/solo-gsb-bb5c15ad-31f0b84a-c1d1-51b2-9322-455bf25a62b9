@@ -41,6 +41,22 @@
         <ul class="round-history" id="inspRoundList"></ul>
       </div>
 
+      <div class="panel-section" id="inspCompareSection">
+        <h3>版本对比 <span id="inspCmpCount" class="muted"></span></h3>
+        <p class="hint">选定同一图纸的旧版与较新的新版，并排核对区域沿革：确认配对后生成只读差异结果（编号 / 风险等级 / 顶点变化 + 两侧未配对区域）。</p>
+        <div class="compare-selects">
+          <label>旧版
+            <select id="cmpOldSeq"></select>
+          </label>
+          <label>新版
+            <select id="cmpNewSeq"></select>
+          </label>
+        </div>
+        <button class="btn primary wide" id="btnStartCompare" style="margin-top:8px">⇄ 发起版本对比</button>
+        <p class="pub-empty" id="inspCmpEmpty"></p>
+        <ul class="round-history" id="inspCmpList"></ul>
+      </div>
+
       <div class="panel-section grow">
         <h3>区域清单（只读） <span id="inspCount" class="muted"></span></h3>
         <ul id="inspRegionList" class="region-list"></ul>

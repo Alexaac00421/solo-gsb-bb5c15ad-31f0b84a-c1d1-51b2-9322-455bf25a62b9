@@ -74,6 +74,7 @@ async function init() {
   }
 
   buildSwitcher(list);
+  buildCompareSection(list);
 
   $('inspRoundsSection').classList.toggle('hidden', list.count === 0);
   if (!list.count) {
@@ -274,6 +275,104 @@ function toast(message, ok) {
   clearTimeout(el._timer);
   el._timer = setTimeout(() => { el.style.opacity = '0'; }, 3200);
 }
+
+/* ------------------------------ 版本对比 ------------------------------ */
+
+/** 版本对比入口：旧版/新版选择 + 发起按钮 + 已有对比任务列表（至少两个巡检版才可用） */
+function buildCompareSection(list) {
+  const section = $('inspCompareSection');
+  const oldSel = $('cmpOldSeq');
+  const newSel = $('cmpNewSeq');
+  const startBtn = $('btnStartCompare');
+  oldSel.innerHTML = '';
+  newSel.innerHTML = '';
+  // list.publications 按序号倒序；下拉按正序展示更直观
+  const pubs = [...list.publications].sort((a, b) => a.seq - b.seq);
+  for (const p of pubs) {
+    const label = `第 ${p.seq} 号 · ${p.region_count} 区 · ${p.published_at}`;
+    oldSel.appendChild(new Option(label, p.seq));
+    newSel.appendChild(new Option(label, p.seq));
+  }
+  const enough = pubs.length >= 2;
+  oldSel.disabled = newSel.disabled = startBtn.disabled = !enough;
+  if (enough) {
+    // 默认选中最近两版：旧版 = 次新，新版 = 最新
+    oldSel.value = String(pubs[pubs.length - 2].seq);
+    newSel.value = String(pubs[pubs.length - 1].seq);
+    $('inspCmpEmpty').textContent = '';
+  } else {
+    $('inspCmpEmpty').textContent = '至少发布两个巡检版后才能发起版本对比。';
+  }
+  loadComparisons();
+}
+
+async function loadComparisons() {
+  const ul = $('inspCmpList');
+  const countEl = $('inspCmpCount');
+  ul.innerHTML = '';
+  let data;
+  try {
+    data = await apiGet(`/api/plans/${planId}/comparisons`);
+  } catch (err) {
+    $('inspCmpEmpty').textContent = '对比任务列表加载失败：' + err.message;
+    countEl.textContent = '';
+    return;
+  }
+  countEl.textContent = `（${data.count}）`;
+  if (!data.count) return;
+  for (const c of data.comparisons) {
+    const done = c.status === 'completed';
+    const li = document.createElement('li');
+    li.className = 'round-history-item' + (done ? ' done' : ' live');
+    li.innerHTML = `
+      <div class="round-history-head">
+        <span class="round-seq">第 ${c.seq} 次 · #${c.old_seq} → #${c.new_seq}</span>
+        <span class="round-status-tag">${done ? '✅ 已完成' : '🚧 配对中'}</span>
+      </div>
+      <div class="round-progress-text muted">
+        已配对 ${c.pair_count} 对 · 旧版 ${c.old_region_count} 区 · 新版 ${c.new_region_count} 区
+      </div>
+      <div class="round-history-foot muted">
+        ${done ? '完成于 ' + esc(c.completed_at || '') : '更新于 ' + esc(c.updated_at || '')}
+        <span class="round-history-actions"></span>
+      </div>`;
+    const openBtn = document.createElement('a');
+    openBtn.className = 'btn';
+    openBtn.textContent = done ? '查看结果' : '继续配对';
+    openBtn.href = `/compare.html?plan=${planId}&comparison=${c.id}`;
+    openBtn.target = '_blank';
+    openBtn.rel = 'noopener';
+    li.querySelector('.round-history-actions').appendChild(openBtn);
+    ul.appendChild(li);
+  }
+}
+
+$('btnStartCompare').addEventListener('click', async () => {
+  const oldSeq = Number($('cmpOldSeq').value);
+  const newSeq = Number($('cmpNewSeq').value);
+  if (oldSeq === newSeq) {
+    toast('旧版与新版不能是同一个巡检版', false);
+    return;
+  }
+  if (oldSeq > newSeq) {
+    toast('版本顺序颠倒：旧版序号必须小于新版序号', false);
+    return;
+  }
+  const btn = $('btnStartCompare');
+  btn.disabled = true;
+  try {
+    const res = await apiPost(`/api/plans/${planId}/comparisons`, {
+      old_seq: oldSeq, new_seq: newSeq,
+    });
+    toast(`已创建第 ${res.comparison.seq} 次版本对比（#${oldSeq} → #${newSeq}）`, true);
+    window.open(`/compare.html?plan=${planId}&comparison=${res.comparison.id}`, '_blank', 'noopener');
+    await loadComparisons();
+  } catch (err) {
+    toast('发起对比失败：' + err.message, false);
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 function renderImage(pub) {
   const img = $('inspImage');

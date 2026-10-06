@@ -174,7 +174,7 @@ input:focus, select:focus { outline: 2px solid rgba(37, 99, 235, .25); border-co
 
 /* ---------- 只读巡检页 ---------- */
 .inspector-body { display: flex; flex-direction: column; height: 100%; }
-.inspector-main { display: flex; flex: 1; min-height: 0; }
+.inspector-main { display: flex; flex: 1; min-height: 0; position: relative; }
 .inspector-panel { height: 100%; }
 .inspector-switch label { display: flex; flex-direction: column; gap: 5px; font-weight: 500; }
 .inspector-switch .btn-row { margin-top: 10px; }
@@ -273,3 +273,79 @@ input:focus, select:focus { outline: 2px solid rgba(37, 99, 235, .25); border-co
 .header-btn { font-size: 12.5px; padding: 5px 12px; text-decoration: none; }
 .round-poly { cursor: pointer; }
 .round-poly.selected { stroke-width: 3.5; }
+
+/* ---------- 版本对比 ---------- */
+.compare-canvases { flex: 1; display: flex; min-width: 0; position: relative; }
+.compare-side {
+  flex: 1; min-width: 0; display: flex; flex-direction: column;
+  border-right: 1px solid var(--border); position: relative;
+  background: #e9ebef; overflow: hidden;
+}
+.compare-side:last-child { border-right: none; }
+.compare-side-head {
+  padding: 6px 12px; background: #111827; color: #e5e7eb;
+  font-size: 12.5px; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap;
+}
+.compare-side-head .muted { color: #9ca3af; }
+.compare-side svg { flex: 1; width: 100%; display: block; cursor: grab; }
+.compare-side svg.panning { cursor: grabbing; }
+.compare-side .canvas-status { bottom: 158px; } /* 避开底部区域清单 */
+.compare-region-list {
+  height: 148px; overflow-y: auto; background: var(--panel);
+  border-top: 1px solid var(--border); padding: 8px 10px; margin: 0; list-style: none;
+}
+.compare-region-list li {
+  padding: 6px 8px; border: 1px solid #eef0f3; border-radius: 6px;
+  margin-bottom: 5px; cursor: pointer; display: flex; align-items: center; gap: 8px;
+  font-size: 12.5px;
+}
+.compare-region-list li:hover { background: #f8fafc; }
+.compare-region-list li.selected { border-color: var(--primary); background: #eff6ff; }
+.compare-region-list .pair-tag { margin-left: auto; font-size: 11px; color: var(--muted); }
+
+.cmp-poly { cursor: pointer; }
+.cmp-poly.selected { stroke-width: 3.5; }
+.cmp-pair-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.cmp-pair-list { list-style: none; margin: 0; padding: 0; }
+.cmp-pair-list li {
+  display: flex; align-items: center; gap: 7px; padding: 6px 8px;
+  border: 1px solid #eef0f3; border-radius: 6px; margin-bottom: 5px; font-size: 12.5px;
+}
+.cmp-pair-list li .btn { margin-left: auto; padding: 2px 10px; font-size: 12px; }
+.cmp-arrow { color: var(--muted); }
+
+.cmp-suggest {
+  border: 1px dashed #c7d2fe; background: #eef2ff; border-radius: 8px;
+  padding: 8px 10px; margin-top: 8px;
+}
+.cmp-suggest-item { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 3px 0; font-size: 12.5px; }
+.cmp-suggest-item .btn { padding: 2px 12px; font-size: 12px; }
+
+.cmp-conflict {
+  margin-top: 8px; border: 1px solid #fdba74; background: #fff7ed;
+  border-radius: 8px; padding: 9px 11px; font-size: 12.5px; line-height: 1.6;
+}
+.cmp-conflict-server {
+  margin-top: 4px; padding: 5px 8px; background: #fff; border: 1px solid #fde8d0;
+  border-radius: 6px; font-size: 12px; color: #7c2d12; word-break: break-all;
+}
+
+.cmp-result-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.cmp-result-card {
+  border: 1px solid #e5e7eb; border-left: 4px solid var(--primary);
+  border-radius: 8px; padding: 8px 10px; margin-bottom: 8px;
+  background: #fff; font-size: 12.5px; line-height: 1.6;
+}
+.cmp-result-card.unchanged { border-left-color: #9ca3af; }
+.cmp-result-head { display: flex; align-items: center; gap: 7px; margin-bottom: 3px; }
+.cmp-changed { color: var(--danger); font-weight: 600; }
+.cmp-unpaired { display: flex; gap: 14px; }
+.cmp-unpaired-col { flex: 1; min-width: 0; }
+.cmp-unpaired-col ul { list-style: none; margin: 6px 0 0; padding: 0; }
+.cmp-unpaired-col li {
+  display: flex; align-items: center; gap: 7px; padding: 4px 6px;
+  border-bottom: 1px solid #f1f3f5; font-size: 12.5px;
+}
+
+.compare-selects { display: flex; gap: 8px; margin-top: 8px; }
+.compare-selects label { flex: 1; display: flex; flex-direction: column; gap: 4px; font-weight: 500; font-size: 12.5px; }
